@@ -75,12 +75,13 @@ jobs:
           if apt-cache show libsdl3-image-dev >/dev/null 2>&1; then
             sudo apt-get install -y --no-install-recommends libsdl3-image-dev
           else
-            # Build SDL3_image from source.
-            # SDLIMAGE_VENDORED=ON bundles libjpeg/libpng/etc so we don't need
-            # to track down distro packages for each image codec.
+            # Build SDL3_image from source against system image libs
+            # (SDLIMAGE_VENDORED=OFF avoids needing populated git submodules,
+            # which a --depth 1 clone does not fetch).
             sudo apt-get install -y --no-install-recommends \
               build-essential cmake git ca-certificates curl \
-              pkg-config
+              pkg-config \
+              libjpeg-dev libpng-dev libwebp-dev libtiff-dev
 
             rm -rf /tmp/SDL_image
             git clone --depth 1 --branch release-3.4.x \
@@ -88,7 +89,7 @@ jobs:
 
             cmake -S /tmp/SDL_image -B /tmp/SDL_image/build \
               -DCMAKE_BUILD_TYPE=Release \
-              -DSDLIMAGE_VENDORED=ON \
+              -DSDLIMAGE_VENDORED=OFF \
               -DSDLIMAGE_SAMPLES=OFF \
               -DCMAKE_PREFIX_PATH="${SDL_PREFIX}" \
               -DCMAKE_INSTALL_PREFIX="${SDL_PREFIX}"

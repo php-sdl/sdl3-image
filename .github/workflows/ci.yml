@@ -1,0 +1,161 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
+
+jobs:
+  build:
+    name: PHP ${{ matrix.php }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        php: ["8.2", "8.3", "8.4"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up PHP ${{ matrix.php }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          tools: none
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── SDL3 ─────────────────────────────────────────────────────────────────
+      - name: Install SDL3 (macOS)
+        if: runner.os == 'macOS'
+        run: brew install sdl3
+
+      - name: Install SDL3 (Linux)
+        if: runner.os == 'Linux'
+        id: sdl
+        uses: libsdl-org/setup-sdl@main
+        with:
+          version: 3-latest
+          build-type: Release
+          install-linux-dependencies: true
+          add-to-environment: true
+
+      - name: Expose SDL3 to pkg-config (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          echo "PKG_CONFIG_PATH=${{ steps.sdl.outputs.prefix }}/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=${{ steps.sdl.outputs.prefix }}/lib:${{ steps.sdl.outputs.prefix }}/lib64:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+
+      # ── SDL3_image ────────────────────────────────────────────────────────────
+      - name: Install SDL3_image (macOS)
+        if: runner.os == 'macOS'
+        run: brew install sdl3_image
+
+      # Expose Homebrew's pkgconfig to the build — shivammathur/setup-php can
+      # shadow Homebrew's environment, so we set this explicitly.
+      - name: Expose Homebrew pkgconfig to PATH (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          BREW_PREFIX="$(brew --prefix)"
+          echo "PKG_CONFIG_PATH=${BREW_PREFIX}/lib/pkgconfig:${BREW_PREFIX}/share/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+
+      - name: Install SDL3_image (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euxo pipefail
+          SDL_PREFIX="${{ steps.sdl.outputs.prefix }}"
+
+          sudo apt-get update
+
+          # Prefer distro package if Ubuntu ever ships SDL3_image dev headers.
+          if apt-cache show libsdl3-image-dev >/dev/null 2>&1; then
+            sudo apt-get install -y --no-install-recommends libsdl3-image-dev
+          else
+            # Build SDL3_image from source.
+            # SDLIMAGE_VENDORED=ON bundles libjpeg/libpng/etc so we don't need
+            # to track down distro packages for each image codec.
+            sudo apt-get install -y --no-install-recommends \
+              build-essential cmake git ca-certificates curl \
+              pkg-config
+
+            rm -rf /tmp/SDL_image
+            git clone --depth 1 --branch release-3.x \
+              https://github.com/libsdl-org/SDL_image.git /tmp/SDL_image
+
+            cmake -S /tmp/SDL_image -B /tmp/SDL_image/build \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DSDLIMAGE_VENDORED=ON \
+              -DSDLIMAGE_SAMPLES=OFF \
+              -DCMAKE_PREFIX_PATH="${SDL_PREFIX}" \
+              -DCMAKE_INSTALL_PREFIX="${SDL_PREFIX}"
+
+            cmake --build /tmp/SDL_image/build -j"$(nproc)"
+            sudo cmake --install /tmp/SDL_image/build
+          fi
+
+          echo "PKG_CONFIG_PATH=${SDL_PREFIX}/lib/pkgconfig:${SDL_PREFIX}/lib64/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=${SDL_PREFIX}/lib:${SDL_PREFIX}/lib64:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+
+      - name: Verify SDL pkg-config wiring (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euxo pipefail
+          SDL_PREFIX="${{ steps.sdl.outputs.prefix }}"
+          export PKG_CONFIG_PATH="${SDL_PREFIX}/lib/pkgconfig:${SDL_PREFIX}/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
+
+          pkg-config --modversion sdl3
+          for pc in SDL3_image sdl3-image sdl3_image; do
+            if pkg-config --exists "$pc"; then
+              pkg-config --modversion "$pc"
+              pkg-config --cflags "$pc"
+              pkg-config --libs "$pc"
+              exit 0
+            fi
+          done
+
+          echo "No SDL3_image pkg-config entry found; build will fall back to manual flags."
+
+      # ── Build ─────────────────────────────────────────────────────────────────
+      # GCC 14+ (Ubuntu 24.10+) promotes -Wincompatible-pointer-types to a hard
+      # error. Zephir-generated code has benign mismatches — demote to warnings.
+      # config.m4 also applies these flags, but setting them here ensures they
+      # are appended to (not replace) any flags already set by the PHP build system.
+      - name: Build extension
+        working-directory: ext
+        env:
+          CFLAGS: >-
+            ${{ env.CFLAGS }}
+            -Wno-error=incompatible-pointer-types
+            -Wno-error=int-conversion
+            -Wno-error=implicit-function-declaration
+            -Wno-error=implicit-int
+        run: |
+          set -euxo pipefail
+
+          # Remove machine-specific generated artifacts accidentally committed
+          # from prior local builds (e.g. macOS Homebrew paths in *.dep files).
+          rm -rf autom4te.cache .libs modules
+          rm -f Makefile Makefile.fragments config.h config.h.in config.log config.nice config.status libtool
+          find . -name "*.dep" -type f -delete
+
+          if [ "${RUNNER_OS}" = "Linux" ]; then
+            SDL_PREFIX="${{ steps.sdl.outputs.prefix }}"
+            export CFLAGS="${CFLAGS:-} -I${SDL_PREFIX}/include -I${SDL_PREFIX}/include/SDL3 -I${SDL_PREFIX}/include/SDL3_image"
+            export CPPFLAGS="${CPPFLAGS:-} -I${SDL_PREFIX}/include -I${SDL_PREFIX}/include/SDL3 -I${SDL_PREFIX}/include/SDL3_image"
+            export LDFLAGS="${LDFLAGS:-} -L${SDL_PREFIX}/lib -L${SDL_PREFIX}/lib64 -Wl,-rpath,${SDL_PREFIX}/lib -Wl,-rpath,${SDL_PREFIX}/lib64"
+          fi
+
+          phpize
+          ./configure --enable-sdl3image
+          make -j$(nproc 2>/dev/null || sysctl -n hw.logicalcpu)
+
+      # ── Smoke test ────────────────────────────────────────────────────────────
+      - name: Smoke-test
+        run: |
+          php \
+            -d extension=ext/modules/sdl3image.so \
+            examples/proof_of_work.php

@@ -1,0 +1,30 @@
+{
+    "name": "php-sdl/sdl3-image",
+    "type": "php-ext",
+    "description": "PHP extension for SDL3_image — image loading (PNG, JPG, WebP, and more) built with Zephir",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Project Saturn Studios, LLC",
+            "email": "info@projectsaturnstudios.com"
+        }
+    ],
+    "require": {
+        "php": ">=8.2"
+    },
+    "php-ext": {
+        "extension-name": "sdl3image",
+        "priority": 30,
+        "build-path": "ext",
+        "support-zts": true,
+        "support-nts": true,
+        "os-families-exclude": ["windows"],
+        "configure-options": [
+            {
+                "name": "enable-sdl3image",
+                "description": "Enable the sdl3image extension",
+                "needs-value": false
+            }
+        ]
+    }
+}

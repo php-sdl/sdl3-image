@@ -83,7 +83,7 @@ jobs:
               pkg-config
 
             rm -rf /tmp/SDL_image
-            git clone --depth 1 --branch release-3.x \
+            git clone --depth 1 --branch release-3.4.x \
               https://github.com/libsdl-org/SDL_image.git /tmp/SDL_image
 
             cmake -S /tmp/SDL_image -B /tmp/SDL_image/build \

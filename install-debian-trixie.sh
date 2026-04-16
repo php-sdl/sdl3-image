@@ -161,7 +161,7 @@ ensure_sdl3_image_debian() {
         $SUDO apt-get install -y pkg-config build-essential cmake git || die "Failed to install SDL3_image build prerequisites."
         TMP_IMG_DIR="$(mktemp -d)"
         trap 'rm -rf "$TMP_IMG_DIR"' EXIT
-        git clone --branch main --depth 1 https://github.com/libsdl-org/SDL_image "$TMP_IMG_DIR/SDL_image" || die "Failed to clone SDL_image."
+        git clone --branch release-3.4.x --depth 1 https://github.com/libsdl-org/SDL_image "$TMP_IMG_DIR/SDL_image" || die "Failed to clone SDL_image."
         cmake -S "$TMP_IMG_DIR/SDL_image" -B "$TMP_IMG_DIR/SDL_image/build" \
             -DCMAKE_BUILD_TYPE=Release \
             -DSDLIMAGE_VENDORED=ON \
